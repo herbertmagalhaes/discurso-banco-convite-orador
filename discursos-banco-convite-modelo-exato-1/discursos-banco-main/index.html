@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Discursos Públicos</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">
+
+let oradores = [];
+let abaAtual = 'discursos';
+
+function abrirAba(aba) {
+  abaAtual = aba;
+  document.getElementById("abaDiscursos").classList.toggle("oculto", aba !== "discursos");
+  document.getElementById("abaOradores").classList.toggle("oculto", aba !== "oradores");
+  document.getElementById("tabDiscursos").className = aba === "discursos" ? "primario" : "secundario";
+  document.getElementById("tabOradores").className = aba === "oradores" ? "primario" : "secundario";
+  if (aba === "oradores") carregarOradores();
+}
+
+async function carregarOradores() {
+  if (!usuarioAtual) return;
+  const {data,error}=await sb.from("oradores")
+    .select("id,nome,tema,congregacao,data_discurso,horario,periodo,created_at")
+    .eq("user_id",usuarioAtual.id)
+    .order("nome",{ascending:true});
+  if(error) {
+    status("Não foi possível carregar os oradores. Crie a tabela 'oradores' no Supabase usando o arquivo supabase.sql.");
+    console.error(error);
+    return;
+  }
+  oradores=data||[];
+  renderOradores();
+}
+
+function renderOradores() {
+  const termo=(document.getElementById("buscarOrador")?.value||"").toLowerCase().trim();
+  const lista=document.getElementById("listaOradores");
+  if(!lista) return;
+  const filtrados=oradores.filter(o =>
+    !termo ||
+    (o.nome||"").toLowerCase().includes(termo) ||
+    (o.tema||"").toLowerCase().includes(termo) ||
+    (o.congregacao||"").toLowerCase().includes(termo)
+  );
+  if(!filtrados.length) {
+    lista.innerHTML='<div class="vazio">Nenhum orador cadastrado.</div>';
+    return;
+  }
+  lista.innerHTML=filtrados.map(o=>`
+    <div class="orador-card">
+      <div>
+        <div class="orador-nome">${escapeHtml(o.nome)}</div>
+        <div class="orador-detalhes"><strong>Tema:</strong> ${escapeHtml(o.tema)}<br><strong>Congregação:</strong> ${escapeHtml(o.congregacao)}<br><strong>Data:</strong> ${formatarData(o.data_discurso)} &nbsp; <strong>Horário:</strong> ${escapeHtml(o.horario||"")} ${escapeHtml(o.periodo||"")}</div>
+      </div>
+      <div class="orador-acoes">
+        <button class="primario" onclick="gerarConvite('${o.id}')">🖨️ Gerar convite</button>
+        <button class="secundario" onclick="editarOrador('${o.id}')">✏️ Editar</button>
+        <button class="secundario" onclick="excluirOrador('${o.id}')">🗑️ Excluir</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function formatarData(valor) {
+  if(!valor) return "";
+  const [a,m,d]=valor.split("-");
+  return a&&m&&d ? `${d}/${m}/${a.slice(-2)}` : valor;
+}
+
+function escapeHtml(valor) {
+  return String(valor??"").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  }[c]));
+}
+
+async function salvarOrador(event) {
+  event.preventDefault();
+  if(!usuarioAtual) return;
+  const id=document.getElementById("oradorId").value;
+  const payload={
+    user_id:usuarioAtual.id,
+    nome:document.getElementById("oradorNome").value.trim(),
+    tema:document.getElementById("oradorTema").value.trim(),
+    congregacao:document.getElementById("oradorCongregacao").value.trim(),
+    data_discurso:document.getElementById("oradorData").value,
+    horario:document.getElementById("oradorHorario").value,
+    periodo:document.getElementById("oradorPeriodo").value
+  };
+  if(!payload.nome || !payload.tema || !payload.congregacao) return;
+  let result;
+  if(id) result=await sb.from("oradores").update(payload).eq("id",id).eq("user_id",usuarioAtual.id);
+  else result=await sb.from("oradores").insert(payload);
+  if(result.error) {
+    status("Erro ao salvar orador: "+result.error.message);
+    console.error(result.error);
+    return;
+  }
+  status(id ? "✓ Orador atualizado." : "✓ Orador salvo na internet.");
+  limparFormularioOrador();
+  await carregarOradores();
+}
+
+function editarOrador(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o) return;
+  document.getElementById("oradorId").value=o.id;
+  document.getElementById("oradorNome").value=o.nome||"";
+  document.getElementById("oradorTema").value=o.tema||"";
+  document.getElementById("oradorCongregacao").value=o.congregacao||"";
+  document.getElementById("oradorData").value=o.data_discurso||"";
+  document.getElementById("oradorHorario").value=o.horario||"09:00";
+  document.getElementById("oradorPeriodo").value=o.periodo||"Manhã";
+  document.getElementById("btnSalvarOrador").textContent="💾 Atualizar orador";
+  document.getElementById("btnCancelarEdicao").classList.remove("oculto");
+  document.getElementById("oradorNome").focus();
+}
+
+function cancelarEdicao() { limparFormularioOrador(); }
+
+function limparFormularioOrador() {
+  document.getElementById("formOrador").reset();
+  document.getElementById("oradorId").value="";
+  document.getElementById("btnSalvarOrador").textContent="💾 Salvar orador";
+  document.getElementById("btnCancelarEdicao").classList.add("oculto");
+}
+
+async function excluirOrador(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o || !confirm(`Excluir o orador "${o.nome}"?`)) return;
+  const {error}=await sb.from("oradores").delete().eq("id",id).eq("user_id",usuarioAtual.id);
+  if(error) { status("Erro ao excluir: "+error.message); return; }
+  status("Orador excluído.");
+  await carregarOradores();
+}
+
+function gerarConvite(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o) return;
+  const janela=window.open("","_blank","width=900,height=1100");
+  if(!janela) {
+    alert("O navegador bloqueou a janela do convite. Permita pop-ups para este site.");
+    return;
+  }
+
+  const nome=escapeHtml(o.nome||"");
+  const tema=escapeHtml(o.tema||"");
+  const horario=escapeHtml(o.horario||"09:00");
+  const periodo=escapeHtml((o.periodo||"Manhã").replace("ã","a"));
+  const dataObj=o.data_discurso ? new Date(o.data_discurso+"T12:00:00") : null;
+  const data=dataObj ? String(dataObj.getDate()).padStart(2,"0")+"/"+String(dataObj.getMonth()+1).padStart(2,"0")+"/"+String(dataObj.getFullYear()).slice(-2) : "";
+  const dia=dataObj ? dataObj.toLocaleDateString("pt-BR",{weekday:"long"}).replace(/^./,c=>c.toUpperCase()) : "";
+  const modeloUrl=new URL("assets/convite-modelo-base.png",window.location.href).href;
+
+  janela.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Convite de Orador - ${nome}</title>
+  <style>
+    @page{size:A4;margin:0}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:#ddd}
+    body{font-family:Georgia,'Times New Roman',serif;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .pagina{width:210mm;min-height:297mm;margin:0 auto;position:relative;background:#fff;overflow:hidden}
+    .modelo{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:fill}
+    .cobertura{position:absolute;z-index:2}.cobertura.tema{left:18.0%;top:52.55%;width:74.0%;height:3.7%;background:#afbfd4}.cobertura.data{left:26.6%;top:57.55%;width:16.0%;height:7.0%;background:#fff}.cobertura.hora{left:68.6%;top:57.8%;width:12.0%;height:7.0%;background:#fff}.cobertura.orador{left:24.0%;top:66.45%;width:52.0%;height:4.0%;background:#afbfd4}.campo{position:absolute;z-index:3;display:flex;align-items:center;overflow:hidden;white-space:nowrap;font-family:Georgia,'Times New Roman',serif;font-weight:700;color:#111}
+    .tema{left:18.45%;top:52.75%;width:71.8%;height:2.9%;font-size:16px}
+    .data{left:27.7%;top:58.0%;width:13.0%;height:2.6%;font-size:17px}
+    .dia{left:27.5%;top:61.55%;width:14.0%;height:2.6%;font-size:17px}
+    .hora{left:69.5%;top:58.35%;width:9.0%;height:2.6%;font-size:17px}
+    .periodo{left:69.5%;top:61.75%;width:10.5%;height:2.6%;font-size:17px}
+    .orador{left:24.55%;top:66.9%;width:49%;height:3.0%;font-size:17px}
+    .acoes{text-align:center;padding:10px;background:#eee;font-family:Arial,sans-serif}
+    .acoes button{border:0;border-radius:8px;background:#1769aa;color:#fff;padding:11px 20px;font-weight:bold;cursor:pointer}
+    @media print{html,body{background:#fff}.pagina{margin:0}.acoes{display:none}}
+    @media(max-width:760px){body{background:#fff}.pagina{width:100vw;height:141.4286vw;min-height:0}.acoes{position:sticky;bottom:0}}
+  </style></head><body>
+  <div class="pagina">
+    <img class="modelo" src="${modeloUrl}" alt="Modelo de convite">
+    <div class="cobertura tema"></div><div class="cobertura data"></div><div class="cobertura hora"></div><div class="cobertura orador"></div>
+    <div class="campo tema">${tema}</div>
+    <div class="campo data">${data}</div>
+    <div class="campo dia">${escapeHtml(dia)}</div>
+    <div class="campo hora">${horario}</div>
+    <div class="campo periodo">${periodo}</div>
+    <div class="campo orador">${nome}</div>
+  </div>
+  <div class="acoes"><button onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button></div>
+  </body></html>`);
+  janela.document.close();janela.focus();
+}
+</script>
+<style>
+:root {
+  --azul:#1769aa; --azul-escuro:#0d3b66; --fundo:#eaf2f8; --cartao:#ffffff;
+  --texto:#183042; --sim:#c8f7d0; --sim-texto:#176b2c;
+  --nao:#ffd1d1; --nao-texto:#9b1c1c; --borda:#d7e3ec;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; font-family:Arial, sans-serif; color:var(--texto);
+  background:linear-gradient(180deg,#eaf2f8 0%,#f5f9fc 100%); min-height:100vh;
+}
+.container { max-width:1050px; margin:auto; padding:22px 16px 50px; }
+header {
+  background:linear-gradient(135deg,var(--azul-escuro),var(--azul)); color:white;
+  border-radius:18px; padding:24px; box-shadow:0 8px 25px #0d3b6630;
+}
+h1 { margin:0 0 6px; font-size:30px; }
+.subtitulo { margin:0; opacity:.9; }
+.painel {
+  background:var(--cartao); margin-top:16px; padding:16px; border-radius:16px;
+  box-shadow:0 4px 18px #0d3b6612; border:1px solid var(--borda);
+}
+.linha { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+input {
+  flex:1; min-width:230px; padding:13px 15px; border:1px solid #c8d6e2;
+  border-radius:11px; font-size:15px; outline:none;
+}
+input:focus,select:focus { border-color:var(--azul); box-shadow:0 0 0 3px #1769aa18; }
+select { width:100%; min-width:0; margin-top:6px; padding:13px 15px; border:1px solid #c8d6e2; border-radius:11px; font-size:15px; background:#fff; }
+button {
+  border:0; border-radius:10px; padding:11px 15px; font-weight:700;
+  cursor:pointer; transition:.15s; font-size:14px;
+}
+button:hover { transform:translateY(-1px); filter:brightness(.98); }
+.primario { background:var(--azul); color:white; }
+.secundario { background:#edf2f6; color:#334e68; }
+.salvar { background:#176b2c; color:white; }
+.status { margin-top:10px; font-size:14px; color:#526779; }
+#lista { margin-top:16px; }
+.item {
+  background:white; border:1px solid var(--borda); border-radius:14px; padding:14px;
+  margin:9px 0; display:flex; align-items:center; gap:12px;
+  box-shadow:0 2px 8px #0d3b660b;
+}
+.numero { width:44px; font-weight:800; color:var(--azul-escuro); font-size:16px; text-align:center; }
+.titulo { flex:1; line-height:1.4; }
+.escolha { display:flex; gap:7px; }
+.escolha button { min-width:70px; }
+.sim { background:var(--sim); color:var(--sim-texto); }
+.nao { background:var(--nao); color:var(--nao-texto); }
+.selecionado { outline:3px solid #1769aa55; box-shadow:0 0 0 2px white inset; }
+.indisponivel {
+  opacity:.62; background:#f3f5f7; text-decoration:line-through;
+}
+.badge {
+  display:inline-block; margin-left:6px; padding:4px 8px; border-radius:999px;
+  background:#e2e7eb; color:#5c6770; font-size:11px; font-weight:800;
+  text-decoration:none;
+}
+.auth-card { max-width:520px; margin:50px auto; }
+.auth-card input { width:100%; margin:6px 0; }
+.auth-botoes { display:flex; gap:10px; margin-top:8px; }
+.erro { color:#a11; background:#fff1f1; padding:10px; border-radius:9px; margin-top:10px; display:none; }
+.oculto { display:none !important; }
+@media (max-width:650px) {
+  h1 { font-size:24px; }
+  .item { align-items:flex-start; }
+  .numero { width:34px; }
+  .titulo { font-size:14px; }
+  .escolha { flex-direction:column; }
+  .escolha button { min-width:68px; padding:10px 8px; }
+  .container { padding:12px 10px 35px; }
+}
+
+
+h2 { margin:0 0 6px; color:var(--azul-escuro); }
+.ajuda { margin:0 0 16px; color:#526779; font-size:14px; line-height:1.5; }
+.form-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+.form-grid label { font-size:13px; font-weight:700; color:#334e68; }
+.form-grid input { width:100%; min-width:0; margin-top:6px; }
+.form-actions { margin-top:14px; }
+.orador-card {
+  border:1px solid var(--borda); border-radius:14px; padding:14px; margin:10px 0;
+  display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center;
+  background:#fff; box-shadow:0 2px 8px #0d3b660b;
+}
+.orador-nome { font-size:17px; font-weight:800; color:var(--azul-escuro); }
+.orador-detalhes { margin-top:5px; color:#526779; line-height:1.5; font-size:14px; }
+.orador-acoes { display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end; }
+.vazio { text-align:center; padding:28px 10px; color:#718096; }
+@media (max-width:800px) { .form-grid { grid-template-columns:1fr; } }
+@media (max-width:650px) {
+  .orador-card { grid-template-columns:1fr; }
+  .orador-acoes { justify-content:flex-start; }
+}
+</style>
+</head>
+<body>
+
+<div id="login" class="container auth-card">
+  <div class="painel">
+    <h1 style="color:#0d3b66;margin-top:0">Discursos Públicos</h1>
+    <p>Entre na sua conta para salvar suas marcações na internet.</p>
+    <input id="email" type="email" placeholder="E-mail">
+    <input id="senha" type="password" placeholder="Senha (mínimo 6 caracteres)">
+    <div class="auth-botoes">
+      <button class="primario" onclick="entrar()">Entrar</button>
+      <button class="secundario" onclick="criarConta()">Criar conta</button>
+    </div>
+    <div id="authErro" class="erro"></div>
+  </div>
+</div>
+
+<div id="app" class="container oculto">
+  <header>
+    <h1>Discursos Públicos</h1>
+    <p class="subtitulo">Gerencie discursos e oradores em um só lugar.</p>
+  </header>
+
+  <div class="painel">
+    <div class="linha">
+      <button id="tabDiscursos" class="primario" onclick="abrirAba('discursos')">📚 Discursos</button>
+      <button id="tabOradores" class="secundario" onclick="abrirAba('oradores')">🎤 Oradores</button>
+      <button class="secundario" onclick="sair()">Sair</button>
+    </div>
+    <div id="usuario" class="status"></div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <section id="abaDiscursos">
+    <div class="painel">
+      <div class="linha">
+        <input id="search" type="text" placeholder="🔎 Pesquisar por número ou título...">
+        <button class="salvar" onclick="salvar()">💾 Salvar marcações</button>
+        <button class="secundario" onclick="limpar()">🗑 Limpar marcações</button>
+      </div>
+    </div>
+    <div id="lista"></div>
+  </section>
+
+  <section id="abaOradores" class="oculto">
+    <div class="painel">
+      <h2>🎤 Cadastro de oradores</h2>
+      <p class="ajuda">Cadastre o nome, tema e congregação. Os dados ficam salvos no Supabase e podem ser consultados em outro dispositivo ao entrar na mesma conta.</p>
+      <form id="formOrador" onsubmit="salvarOrador(event)">
+        <input type="hidden" id="oradorId">
+        <div class="form-grid">
+          <label>Nome do orador
+            <input id="oradorNome" required maxlength="120" placeholder="Ex.: Henrique César">
+          </label>
+          <label>Tema
+            <input id="oradorTema" required maxlength="200" placeholder="Ex.: Sirva em união com o povo feliz de Deus">
+          </label>
+          <label>Congregação do orador
+            <input id="oradorCongregacao" required maxlength="120" placeholder="Ex.: Messejana">
+          </label>
+          <label>Data do discurso
+            <input id="oradorData" type="date" required>
+          </label>
+          <label>Horário
+            <input id="oradorHorario" type="time" required value="09:00">
+          </label>
+          <label>Período
+            <select id="oradorPeriodo">
+              <option value="Manhã">Manhã</option>
+              <option value="Tarde">Tarde</option>
+              <option value="Noite">Noite</option>
+            </select>
+          </label>
+        </div>
+        <div class="linha form-actions">
+          <button class="salvar" type="submit" id="btnSalvarOrador">💾 Salvar orador</button>
+          <button class="secundario oculto" type="button" id="btnCancelarEdicao" onclick="cancelarEdicao()">Cancelar edição</button>
+        </div>
+      </form>
+    </div>
+    <div class="painel">
+      <div class="linha">
+        <input id="buscarOrador" type="text" placeholder="🔎 Pesquisar orador, tema ou congregação..." oninput="renderOradores()">
+      </div>
+      <div id="listaOradores"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const SUPABASE_URL = "https://nodneidkiozsntpnxcfe.supabase.co";
+const SUPABASE_KEY = "sb_publishable_HVQmwObvz08GG2cJzQ7Y3w_geFj-G3Z";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const discursos = [[1,"Você conhece bem a Deus?"],[2,"Você vai sobreviver aos últimos dias?"],[3,"Você está avançando com a organização unida de Jeová?"],[4,"Que provas temos de que Deus existe?"],[5,"Você pode ter uma família feliz!"],[6,"O Dilúvio dos dias de Noé e você"],[7,"Imite a misericórdia de Jeová"],[8,"Viva para fazer a vontade de Deus"],[9,"Escute e faça o que a Bíblia diz"],[10,"Seja honesto em tudo"],[11,"Imite a Jesus e não faça parte do mundo"],[12,"Deus quer que você respeite quem tem autoridade"],[13,"Qual o ponto de vista de Deus sobre o sexo e o casamento?"],[14,"Um povo puro e limpo honra a Jeová"],[15,"‘Faça o bem a todos’"],[16,"Seja cada vez mais amigo de Jeová"],[17,"Glorifique a Deus com tudo o que você tem"],[18,"Faça de Jeová a sua fortaleza"],[19,"Como você pode saber seu futuro?"],[20,"Chegou o tempo de Deus governar o mundo?"],[21,"Dê valor ao seu lugar no Reino de Deus"],[22,"Você está usando bem o que Jeová lhe dá?"],[23,"A vida tem objetivo"],[24,"Você encontrou “uma pérola de grande valor”?"],[25,"Lute contra o espírito do mundo"],[26,"Você é importante para Deus?"],[27,"Como construir um casamento feliz"],[28,"Mostre respeito e amor no seu casamento"],[29,"As responsabilidades e recompensas de ter filhos"],[30,"Como melhorar a comunicação na família"],[31,"Você tem consciência da sua necessidade espiritual?"],[32,"Como lidar com as ansiedades da vida"],[33,"Quando vai existir verdadeira justiça?"],[34,"Você vai ser marcado para sobreviver?"],[35,"É possível viver para sempre? O que você precisa fazer?"],[36,"Será que a vida é só isso?"],[37,"Obedecer a Deus é mesmo a melhor coisa a fazer?"],[38,"Como você pode sobreviver ao fim do mundo?"],[39,"Jesus Cristo vence o mundo — Como e quando?"],[40,"O que vai acontecer em breve?"],[41,"Fiquem parados e vejam como Jeová os salvará"],[42,"O amor pode vencer o ódio?"],[43,"Tudo o que Deus nos pede é para o nosso bem"],[44,"Como os ensinos de Jesus podem ajudar você?"],[45,"Continue andando no caminho que leva à vida"],[46,"Fortaleça sua confiança em Jeová"],[47,"‘Tenha fé nas boas novas’"],[48,"Seja leal a Deus mesmo quando for testado"],[49,"Será que um dia a Terra vai ser limpa?"],[50,"Como sempre tomar as melhores decisões"],[51,"Será que a verdade da Bíblia está mudando a sua vida?"],[52,"Quem é o seu Deus?"],[53,"Você pensa como Deus?"],[54,"Fortaleça sua fé em Deus e em suas promessas"],[55,"Você está fazendo um bom nome perante Deus?"],[56,"Existe um líder em quem você pode confiar?"],[57,"Como suportar perseguição"],[58,"Quem são os verdadeiros seguidores de Cristo?"],[59,"(Não use.)"],[60,"Você tem um objetivo na vida?"],[61,"Nas promessas de quem você confia?"],[62,"Onde encontrar uma esperança real para o futuro?"],[63,"É possível encontrar a verdade?"],[64,"Você ama os prazeres ou a Deus?"],[65,"Como podemos ser pacíficos num mundo cheio de ódio"],[66,"Você também vai participar na colheita?"],[67,"Medite na Bíblia e nas criações de Jeová"],[68,"‘Continuem a perdoar uns aos outros liberalmente’"],[69,"Por que mostrar amor abnegado?"],[70,"Por que Deus merece sua confiança?"],[71,"‘Mantenha-se desperto’ — Por que e como?"],[72,"O amor identifica os cristãos verdadeiros"],[73,"Você tem “um coração sábio”?"],[74,"Os olhos de Jeová estão em todo lugar"],[75,"Mostre que você apoia o direito de Jeová governar"],[76,"Princípios bíblicos — Podem nos ajudar a lidar com os problemas atuais?"],[77,"“Sempre mostrem hospitalidade”"],[78,"Sirva a Jeová com um coração alegre"],[79,"Você vai escolher ser amigo de Deus?"],[80,"Você baseia sua esperança na ciência ou na Bíblia?"],[81,"Quem está qualificado para fazer discípulos?"],[82,"(Não use.)"],[83,"Será que os cristãos precisam obedecer aos Dez Mandamentos?"],[84,"Escapará do destino deste mundo?"],[85,"Boas notícias num mundo violento"],[86,"Como orar a Deus e ser ouvido por ele?"],[87,"Qual é a sua relação com Deus?"],[88,"Por que viver de acordo com os padrões da Bíblia?"],[89,"Quem tem sede da verdade, venha!"],[90,"Faça o máximo para alcançar a verdadeira vida!"],[91,"A presença do Messias e seu domínio"],[92,"O papel da religião nos assuntos do mundo"],[93,"Desastres naturais — Quando vão acabar?"],[94,"A religião verdadeira atende às necessidades da sociedade humana"],[95,"Não seja enganado pelo ocultismo!"],[96,"O que vai acontecer com as religiões?"],[97,"Permaneçamos inculpes em meio a uma geração pervertida"],[98,"“A cena deste mundo está mudando”"],[99,"Por que podemos confiar no que a Bíblia diz?"],[100,"Como fazer amizades fortes e verdadeiras"],[101,"Jeová é o “Grandioso Criador”"],[102,"Preste atenção à “palavra profética”"],[103,"Como você pode ter a verdadeira alegria?"],[104,"Pais, vocês estão construindo com materiais à prova de fogo?"],[105,"Somos consolados em todas as nossas tribulações"],[106,"Arruinar a Terra provocará retribuição divina"],[107,"Você está treinando bem a sua consciência?"],[108,"Você pode encarar o futuro com confiança!"],[109,"O Reino de Deus está próximo"],[110,"Deus vem primeiro na vida familiar bem-sucedida"],[111,"É possível que a humanidade seja completamente curada?"],[112,"Como mostrar amor num mundo egoísta"],[113,"Jovens — Como vocês podem ter uma vida feliz?"],[114,"Apreço pelas maravilhas da criação de Deus"],[115,"Não caia nas armadilhas de Satanás"],[116,"Escolha sabiamente com quem irá associar-se!"],[117,"Como vencer o mal com o bem"],[118,"Olhemos os jovens do ponto de vista de Jeová"],[119,"Por que é benéfico que os cristãos vivam separados do mundo"],[120,"Por que se submeter à regência de Deus agora"],[121,"Uma família mundial que será salva da destruição"],[122,"(Não use.)"],[123,"(Não use.)"],[124,"Razões para crer que a Bíblia é de autoria divina"],[125,"Por que a humanidade precisa de resgate"],[126,"Quem se salvará?"],[127,"O que acontece quando morremos?"],[128,"É o inferno um lugar de tormento ardente?"],[129,"O que a Bíblia diz sobre a Trindade?"],[130,"A Terra permanecerá para sempre"],[131,"Tome posição contra o Diabo!"],[132,"Ressurreição — A vitória sobre a morte!"],[133,"Tem importância o que cremos sobre a nossa origem?"],[134,"Será que os cristãos precisam guardar o sábado?"],[135,"A santidade da vida e do sangue"],[136,"Será que Deus aprova o uso de imagens na adoração?"],[137,"Ocorreram realmente os milagres da Bíblia?"],[138,"Viva com bom juízo num mundo depravado"],[139,"Sabedoria divina num mundo científico"],[140,"Quem é realmente Jesus Cristo?"],[141,"Quando terão fim os gemidos da criação humana?"],[142,"Por que refugiar-se em Jeová"],[143,"Confie no Deus de todo consolo"],[144,"Uma congregação leal sob a liderança de Cristo"],[145,"Quem é semelhante a Jeová, nosso Deus?"],[146,"Use a educação para louvar a Jeová"],[147,"Confie que Jeová tem o poder para nos salvar"],[148,"Você tem o mesmo conceito de Deus sobre a vida?"],[149,"O que significa “andar com Deus”?"],[150,"Este mundo está condenado à destruição?"],[151,"Jeová é “uma altura protetora” para seu povo"],[152,"Armagedom — Por que e quando?"],[153,"Tenha bem em mente o “atemorizante dia”!"],[154,"O governo humano é pesado na balança"],[155,"Chegou a hora do julgamento de Babilônia?"],[156,"O Dia do Juízo — Tempo de temor ou de esperança?"],[157,"Como os verdadeiros cristãos adornam o ensino divino"],[158,"Seja corajoso e confie em Jeová"],[159,"Como encontrar segurança num mundo perigoso"],[160,"Mantenha a identidade cristã!"],[161,"Por que Jesus sofreu e morreu?"],[162,"Seja liberto deste mundo em escuridão"],[163,"Por que temer o Deus verdadeiro?"],[164,"Será que Deus ainda está no controle?"],[165,"Os valores de quem você preza?"],[166,"Verdadeira fé — O que é e como mostrar"],[167,"Ajamos sabiamente num mundo insensato"],[168,"Você pode sentir-se seguro neste mundo atribulado!"],[169,"Por que ser orientado pela Bíblia?"],[170,"Quem está qualificado para governar a humanidade?"],[171,"Poderá viver em paz agora — E para sempre!"],[172,"Que reputação você tem perante Deus?"],[173,"Existe uma religião verdadeira do ponto de vista de Deus?"],[174,"Quem se qualificará para entrar no novo mundo de Deus?"],[175,"O que prova que a Bíblia é autêntica?"],[176,"Quando haverá verdadeira paz e segurança?"],[177,"Onde encontrar ajuda em tempos de aflição?"],[178,"Ande no caminho da integridade"],[179,"Rejeite as fantasias do mundo, empenhe-se pelas realidades do Reino"],[180,"A ressurreição — Por que essa esperança deve ser real para você"],[181,"Já é mais tarde do que você imagina?"],[182,"O que o Reino de Deus está fazendo por nós agora?"],[183,"Desvie seus olhos do que é fútil"],[184,"A morte é o fim de tudo?"],[185,"Será que a verdade influencia sua vida?"],[186,"Sirva em união com o povo feliz de Deus"],[187,"Por que um Deus amoroso permite a maldade?"],[188,"Você confia em Jeová?"],[189,"Ande com Deus e receba bênçãos para sempre"],[190,"Como se cumprirá a promessa de perfeita felicidade familiar"],[191,"Como o amor e a fé vencem o mundo"],[192,"Você está no caminho para a vida eterna?"],[193,"Os problemas de hoje logo serão coisa do passado"],[194,"Como a sabedoria de Deus nos ajuda"]];
+const indisponiveis = new Set([59, 82, 84, 85, 87, 92, 94, 97, 105, 106, 109, 117, 119, 120, 122, 123, 124, 126, 139, 141, 144, 145, 148, 151, 154, 155, 157, 158, 163, 164, 165, 167, 168]);
+let marcacoes = {};
+let usuarioAtual = null;
+
+function mostrarErro(msg) {
+  const e=document.getElementById("authErro"); e.textContent=msg; e.style.display="block";
+}
+function status(msg) { document.getElementById("status").textContent=msg; }
+
+async function entrar() {
+  document.getElementById("authErro").style.display="none";
+  const email=document.getElementById("email").value.trim();
+  const senha=document.getElementById("senha").value;
+  const {data,error}=await sb.auth.signInWithPassword({email, password:senha});
+  if(error) return mostrarErro(error.message);
+  usuarioAtual=data.user;
+}
+async function criarConta() {
+  document.getElementById("authErro").style.display="none";
+  const email=document.getElementById("email").value.trim();
+  const senha=document.getElementById("senha").value;
+  const {data,error}=await sb.auth.signUp({email, password:senha});
+  if(error) return mostrarErro(error.message);
+  if(data.session) usuarioAtual=data.user;
+  else mostrarErro("Conta criada. Verifique o e-mail se o Supabase solicitar confirmação.");
+}
+async function sair() {
+  await sb.auth.signOut();
+}
+async function carregar() {
+  if(!usuarioAtual) return;
+  const {data,error}=await sb.from("discurso_marcacoes")
+    .select("discurso_numero,status").eq("user_id",usuarioAtual.id);
+  if(error) { status("Não foi possível carregar as marcações."); console.error(error); return; }
+  marcacoes={};
+  (data||[]).forEach(r=>{ marcacoes[r.discurso_numero]=r.status; });
+  render();
+  status("Marcações carregadas.");
+}
+async function salvar() {
+  if(!usuarioAtual) return;
+  const rows=Object.entries(marcacoes).map(([numero,status])=>({
+    user_id:usuarioAtual.id, discurso_numero:Number(numero), status
+  }));
+  if(rows.length) {
+    const {error}=await sb.from("discurso_marcacoes").upsert(rows,{onConflict:"user_id,discurso_numero"});
+    if(error) { status("Erro ao salvar: "+error.message); return; }
+  }
+  status("✓ Marcações salvas na internet.");
+}
+async function limpar() {
+  if(!usuarioAtual) return;
+  if(!confirm("Deseja apagar todas as suas marcações?")) return;
+  const {error}=await sb.from("discurso_marcacoes").delete().eq("user_id",usuarioAtual.id);
+  if(error) { status("Erro ao limpar: "+error.message); return; }
+  marcacoes={}; render(); status("Marcações apagadas.");
+}
+function marcar(n,valor) {
+  if(indisponiveis.has(n)) return;
+  marcacoes[n]=valor; render();
+}
+function render() {
+  const termo=document.getElementById("search").value.toLowerCase().trim();
+  const lista=document.getElementById("lista"); lista.innerHTML="";
+  discursos.filter(([n,t])=>!termo||String(n).includes(termo)||t.toLowerCase().includes(termo))
+  .forEach(([n,t])=>{
+    const d=document.createElement("div");
+    d.className="item"+(indisponiveis.has(n)?" indisponivel":"");
+    const indis=indisponiveis.has(n);
+    d.innerHTML=`
+      <div class="numero">${n}</div>
+      <div class="titulo">${t} ${indis?'<span class="badge">NÃO DISPONÍVEL</span>':""}</div>
+      ${indis?"":`<div class="escolha">
+        <button class="sim ${marcacoes[n]==="sim"?"selecionado":""}" onclick="marcar(${n},'sim')">SIM</button>
+        <button class="nao ${marcacoes[n]==="nao"?"selecionado":""}" onclick="marcar(${n},'nao')">NÃO</button>
+      </div>`}
+    `;
+    lista.appendChild(d);
+  });
+}
+document.getElementById("search").addEventListener("input",render);
+
+sb.auth.onAuthStateChange(async (_event,session)=>{
+  usuarioAtual=session?.user||null;
+  document.getElementById("login").classList.toggle("oculto",!!usuarioAtual);
+  document.getElementById("app").classList.toggle("oculto",!usuarioAtual);
+  if(usuarioAtual){
+    document.getElementById("usuario").textContent="Conta: "+usuarioAtual.email;
+    await carregar();
+  }
+});
+
+
+let oradores = [];
+let abaAtual = 'discursos';
+
+function abrirAba(aba) {
+  abaAtual = aba;
+  document.getElementById("abaDiscursos").classList.toggle("oculto", aba !== "discursos");
+  document.getElementById("abaOradores").classList.toggle("oculto", aba !== "oradores");
+  document.getElementById("tabDiscursos").className = aba === "discursos" ? "primario" : "secundario";
+  document.getElementById("tabOradores").className = aba === "oradores" ? "primario" : "secundario";
+  if (aba === "oradores") carregarOradores();
+}
+
+async function carregarOradores() {
+  if (!usuarioAtual) return;
+  const {data,error}=await sb.from("oradores")
+    .select("id,nome,tema,congregacao,data_discurso,horario,periodo,created_at")
+    .eq("user_id",usuarioAtual.id)
+    .order("nome",{ascending:true});
+  if(error) {
+    status("Não foi possível carregar os oradores. Crie a tabela 'oradores' no Supabase usando o arquivo supabase.sql.");
+    console.error(error);
+    return;
+  }
+  oradores=data||[];
+  renderOradores();
+}
+
+function renderOradores() {
+  const termo=(document.getElementById("buscarOrador")?.value||"").toLowerCase().trim();
+  const lista=document.getElementById("listaOradores");
+  if(!lista) return;
+  const filtrados=oradores.filter(o =>
+    !termo ||
+    (o.nome||"").toLowerCase().includes(termo) ||
+    (o.tema||"").toLowerCase().includes(termo) ||
+    (o.congregacao||"").toLowerCase().includes(termo)
+  );
+  if(!filtrados.length) {
+    lista.innerHTML='<div class="vazio">Nenhum orador cadastrado.</div>';
+    return;
+  }
+  lista.innerHTML=filtrados.map(o=>`
+    <div class="orador-card">
+      <div>
+        <div class="orador-nome">${escapeHtml(o.nome)}</div>
+        <div class="orador-detalhes"><strong>Tema:</strong> ${escapeHtml(o.tema)}<br><strong>Congregação:</strong> ${escapeHtml(o.congregacao)}<br><strong>Data:</strong> ${formatarData(o.data_discurso)} &nbsp; <strong>Horário:</strong> ${escapeHtml(o.horario||"")} ${escapeHtml(o.periodo||"")}</div>
+      </div>
+      <div class="orador-acoes">
+        <button class="primario" onclick="gerarConvite('${o.id}')">🖨️ Gerar convite</button>
+        <button class="secundario" onclick="editarOrador('${o.id}')">✏️ Editar</button>
+        <button class="secundario" onclick="excluirOrador('${o.id}')">🗑️ Excluir</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function formatarData(valor) {
+  if(!valor) return "";
+  const [a,m,d]=valor.split("-");
+  return a&&m&&d ? `${d}/${m}/${a.slice(-2)}` : valor;
+}
+
+function escapeHtml(valor) {
+  return String(valor??"").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  }[c]));
+}
+
+async function salvarOrador(event) {
+  event.preventDefault();
+  if(!usuarioAtual) return;
+  const id=document.getElementById("oradorId").value;
+  const payload={
+    user_id:usuarioAtual.id,
+    nome:document.getElementById("oradorNome").value.trim(),
+    tema:document.getElementById("oradorTema").value.trim(),
+    congregacao:document.getElementById("oradorCongregacao").value.trim(),
+    data_discurso:document.getElementById("oradorData").value,
+    horario:document.getElementById("oradorHorario").value,
+    periodo:document.getElementById("oradorPeriodo").value
+  };
+  if(!payload.nome || !payload.tema || !payload.congregacao) return;
+  let result;
+  if(id) result=await sb.from("oradores").update(payload).eq("id",id).eq("user_id",usuarioAtual.id);
+  else result=await sb.from("oradores").insert(payload);
+  if(result.error) {
+    status("Erro ao salvar orador: "+result.error.message);
+    console.error(result.error);
+    return;
+  }
+  status(id ? "✓ Orador atualizado." : "✓ Orador salvo na internet.");
+  limparFormularioOrador();
+  await carregarOradores();
+}
+
+function editarOrador(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o) return;
+  document.getElementById("oradorId").value=o.id;
+  document.getElementById("oradorNome").value=o.nome||"";
+  document.getElementById("oradorTema").value=o.tema||"";
+  document.getElementById("oradorCongregacao").value=o.congregacao||"";
+  document.getElementById("oradorData").value=o.data_discurso||"";
+  document.getElementById("oradorHorario").value=o.horario||"09:00";
+  document.getElementById("oradorPeriodo").value=o.periodo||"Manhã";
+  document.getElementById("btnSalvarOrador").textContent="💾 Atualizar orador";
+  document.getElementById("btnCancelarEdicao").classList.remove("oculto");
+  document.getElementById("oradorNome").focus();
+}
+
+function cancelarEdicao() { limparFormularioOrador(); }
+
+function limparFormularioOrador() {
+  document.getElementById("formOrador").reset();
+  document.getElementById("oradorId").value="";
+  document.getElementById("btnSalvarOrador").textContent="💾 Salvar orador";
+  document.getElementById("btnCancelarEdicao").classList.add("oculto");
+}
+
+async function excluirOrador(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o || !confirm(`Excluir o orador "${o.nome}"?`)) return;
+  const {error}=await sb.from("oradores").delete().eq("id",id).eq("user_id",usuarioAtual.id);
+  if(error) { status("Erro ao excluir: "+error.message); return; }
+  status("Orador excluído.");
+  await carregarOradores();
+}
+
+function gerarConvite(id) {
+  const o=oradores.find(x=>x.id===id);
+  if(!o) return;
+  const janela=window.open("","_blank","width=850,height=900");
+  if(!janela) {
+    alert("O navegador bloqueou a janela do convite. Permita pop-ups para este site.");
+    return;
+  }
+  const nome=escapeHtml(o.nome), tema=escapeHtml(o.tema), cong=escapeHtml(o.congregacao);
+  janela.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+  <title>Convite - ${nome}</title>
+  <style>
+    @page{size:A4;margin:12mm}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Georgia,'Times New Roman',serif;background:#f3f5f7;color:#172b3a}
+    .folha{width:190mm;min-height:273mm;margin:0 auto;background:#fff;padding:18mm 18mm 16mm;border:1px solid #d8e0e6;position:relative}
+    .topo{text-align:center;border-bottom:2px solid #1769aa;padding-bottom:14px}
+    .marca{font-family:Arial,sans-serif;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#1769aa;font-weight:700}
+    h1{font-size:30px;margin:10px 0 4px;color:#0d3b66}
+    .sub{font-family:Arial,sans-serif;font-size:14px;color:#5c6f7c}
+    .corpo{margin-top:34px;font-size:18px;line-height:1.75}
+    .destaque{margin:26px 0;padding:18px 20px;background:#eef6fb;border-left:5px solid #1769aa}
+    .rotulo{font-family:Arial,sans-serif;text-transform:uppercase;font-size:11px;letter-spacing:1px;color:#627887;font-weight:700}
+    .valor{font-size:22px;font-weight:700;color:#0d3b66;margin-top:3px}
+    .assinatura{margin-top:42px;text-align:center;font-family:Arial,sans-serif;color:#5c6f7c;font-size:13px}
+    .acoes{font-family:Arial,sans-serif;text-align:center;margin:18px}
+    button{padding:10px 18px;border:0;border-radius:8px;background:#1769aa;color:white;font-weight:700;cursor:pointer}
+    @media print{body{background:white}.folha{border:0;margin:0;width:auto}.acoes{display:none}}
+  </style></head><body>
+  <div class="folha">
+    <div class="topo"><div class="marca">Convite</div><h1>Convite para o Orador</h1><div class="sub">Temos a alegria de convidá-lo para participar de nossa programação.</div></div>
+    <div class="corpo">Prezado irmão <strong>${nome}</strong>,<br><br>
+      Será uma alegria receber você para apresentar o discurso abaixo em nossa congregação.
+      <div class="destaque"><div class="rotulo">Tema do discurso</div><div class="valor">${tema}</div></div>
+      <div class="destaque"><div class="rotulo">Congregação</div><div class="valor">${cong}</div></div>
+      Agradecemos desde já sua disposição em servir e contribuir para o fortalecimento espiritual da congregação.
+    </div>
+    <div class="assinatura">Com carinho e apreço,<br><strong>Congregação ${cong}</strong></div>
+  </div>
+  <div class="acoes"><button onclick="window.print()">🖨️ Imprimir / Salvar como PDF</button></div>
+  </body></html>`);
+  janela.document.close();
+  janela.focus();
+}
+
+</script>
+</body>
+</html>
